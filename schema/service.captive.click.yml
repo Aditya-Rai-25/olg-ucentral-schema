@@ -1,0 +1,12 @@
+description: |
+  Configure captive portal with click-to-continue authentication. This is the 
+  simplest captive portal mode where users only need to click a "Continue" or 
+  "Accept" button to gain network access. No credentials are required, making 
+  it ideal for terms-of-service acceptance or basic splash page scenarios.
+type: object
+properties:
+  auth-mode:
+    description:
+      This field must be set to 'click-to-continue'
+    type: string
+    const: click-to-continue
