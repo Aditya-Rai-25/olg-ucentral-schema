@@ -4974,11 +4974,6 @@ cat > "$schema_file" <<'__SCHEMA__'
 __SCHEMA__
 
 cat > "$jq_program" <<'__JQ__'
-def run($root; $input):
-  def validate($root; $schema; $value; $path):
-    def variant_passes($root; $variant; $value; $path):
-      (validate($root; $variant; $value; $path) | length) == 0;
-
 def ptr_unescape:
   gsub("~1"; "/") | gsub("~0"; "~");
 
@@ -5029,86 +5024,127 @@ def resolve_ref($root; $ref):
     null
   end;
 
-def validate_variants($root; $schema; $value; $path):
-  (if (($schema.anyOf? | type) == "array") and (($schema.anyOf | length) > 0) then
-     ([ $schema.anyOf[] | variant_passes($root; .; $value; $path) ] | map(select(.)) | length) as $count |
-     if $count >= 1 then [] else error_at($path; "must match at least one anyOf variant") end
-   else [] end)
-  +
-  (if (($schema.oneOf? | type) == "array") and (($schema.oneOf | length) > 0) then
-     ([ $schema.oneOf[] | variant_passes($root; .; $value; $path) ] | map(select(.)) | length) as $count |
-     if $count == 1 then [] else error_at($path; "must match exactly one oneOf variant") end
-   else [] end)
-  +
-  (if (($schema.allOf? | type) == "array") and (($schema.allOf | length) > 0) then
-     (([ $schema.allOf[] | validate($root; .; $value; $path) ] | add) // [])
-   else [] end);
+def valid_ipv4:
+  test("^([0-9]{1,3}\\.){3}[0-9]{1,3}$")
+  and ((split(".")) as $parts
+    | ($parts | length) == 4
+    and all($parts[]; ((tonumber? // -1) as $n | ($n >= 0 and $n <= 255))));
 
-def validate_object($root; $schema; $value; $path):
-  if ($value | type) != "object" then
-    []
+def valid_ipv6:
+  test("^(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,3}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?:(?::[0-9A-Fa-f]{1,4}){1,6})|:(?:(?::[0-9A-Fa-f]{1,4}){1,7}|:)|fe80:(?::[0-9A-Fa-f]{0,4}){0,4}%[0-9A-Za-z]+|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}|(?:[0-9A-Fa-f]{1,4}:){1,4}:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3})$");
+
+def valid_ip:
+  valid_ipv4 or valid_ipv6;
+
+def valid_host_label:
+  test("^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9])$");
+
+def valid_strict_hostname_label:
+  test("^([A-Za-z0-9]{1,2}|[A-Za-z0-9][A-Za-z0-9-]{0,61}[A-Za-z0-9])$");
+
+def valid_hostname_common($min_labels; $strict):
+  (length <= 255)
+  and ((split(".")) as $labels
+    | ($labels | length) >= $min_labels
+    and all($labels[]; if $strict then valid_strict_hostname_label else valid_host_label end));
+
+def valid_uc_host:
+  valid_ip or valid_hostname_common(1; false);
+
+def valid_uri:
+  if startswith("data:") then
+    true
   else
-    (if (($schema.required? | type) == "array") then
-       [ $schema.required[] as $req | select($value | has($req) | not) |
-         ((child_path($path; $req)) + ": is required") ]
-     else [] end)
-    +
-    (if $schema.additionalProperties? == false then
-       (($schema.properties? // {}) as $props |
-       [ ($value | keys_unsorted[]) as $key
-         | select($props | has($key) | not)
-         | ((child_path($path; $key)) + ": additional property is not allowed") ]
-       )
-     else [] end)
-    +
-    ((($schema.properties? // {}) as $props
-      | [ ($props | to_entries[]) as $entry
-          | select($value | has($entry.key))
-          | validate($root; $entry.value; $value[$entry.key]; child_path($path; $entry.key)) ]
-      | add) // [])
-    +
-    (if (($schema.minProperties? | type) == "number") and (($value | length) < $schema.minProperties) then
-       error_at($path; "must contain at least \($schema.minProperties) properties")
-     else [] end)
-    +
-    (if (($schema.maxProperties? | type) == "number") and (($value | length) > $schema.maxProperties) then
-       error_at($path; "must contain at most \($schema.maxProperties) properties")
-     else [] end)
+    (capture("^(?<scheme>[a-z+-]+)://(?<host>[^/]+).*$")? // null) as $m
+    | if $m == null then false
+      else (($m.host | valid_ip) or (($m.host | length) <= 255 and (($m.host | split(".")) as $labels | ($labels | length) > 0 and all($labels[]; valid_host_label))))
+      end
   end;
 
-def validate_array($root; $schema; $value; $path):
-  if ($value | type) != "array" then
-    []
-  else
-    (if (($schema.minItems? | type) == "number") and (($value | length) < $schema.minItems) then
-       error_at($path; "must contain at least \($schema.minItems) items")
-     else [] end)
-    +
-    (if (($schema.maxItems? | type) == "number") and (($value | length) > $schema.maxItems) then
-       error_at($path; "must contain at most \($schema.maxItems) items")
-     else [] end)
-    +
-    (if ($schema.items? | type) == "object" then
-       (([ range(0; $value | length) as $idx
-         | validate($root; $schema.items; $value[$idx]; child_path($path; $idx)) ]
-         | add) // [])
-     else [] end)
-  end;
+def valid_base64:
+  (try (@base64d) catch null) != null;
+
+def valid_portrange:
+  (capture("^(?<min>[0-9]+)(-(?<max>[0-9]+))?$")? // null) as $m
+  | if $m == null then false
+    else ($m.min | tonumber) as $min
+    | (($m.max // $m.min) | tonumber) as $max
+    | ($min <= 65535 and $max <= 65535 and $max >= $min)
+    end;
+
+def format_desc($format):
+  if $format == "uc-cidr4" then "IPv4 CIDR"
+  elif $format == "uc-cidr6" then "IPv6 CIDR"
+  elif $format == "uc-cidr" then "IPv4 or IPv6 CIDR"
+  elif $format == "uc-mac" then "MAC address"
+  elif $format == "uc-mobility" then "Mobility Domain"
+  elif $format == "uc-host" then "hostname or IP address"
+  elif $format == "uc-timeout" then "timeout value"
+  elif $format == "uc-base64" then "base64 encoded data"
+  elif $format == "uc-portrange" then "network port range"
+  elif $format == "hostname" then "hostname"
+  elif $format == "uc-fqdn" then "fully qualified domain name"
+  elif $format == "uc-ip" then "IPv4 or IPv6 address"
+  elif $format == "ipv4" then "IPv4 address"
+  elif $format == "ipv6" then "IPv6 address"
+  elif $format == "uri" then "URI"
+  else $format end;
+
+def format_is_valid($format; $value):
+  if ($value | type) != "string" then false
+  elif $format == "uc-cidr4" then
+    ($value | capture("^(?<ip>auto|[0-9.]+)/(?<prefix>[0-9]+)$")? // null) as $m
+    | $m != null and (($m.ip == "auto") or ($m.ip | valid_ipv4)) and (($m.prefix | tonumber) <= 32)
+  elif $format == "uc-cidr6" then
+    ($value | capture("^(?<ip>auto|[0-9A-Fa-f:.]+)/(?<prefix>[0-9]+)$")? // null) as $m
+    | $m != null and (($m.ip == "auto") or ($m.ip | valid_ipv6)) and (($m.prefix | tonumber) <= 128)
+  elif $format == "uc-cidr" then
+    ($value | capture("^(?<ip>auto|[0-9A-Fa-f:.]+)/(?<prefix>[0-9]+)$")? // null) as $m
+    | if $m == null then false
+      else (($m.ip == "auto") or ($m.ip | valid_ip))
+        and (($m.prefix | tonumber) <= (if $m.ip == "auto" or ($m.ip | valid_ipv6) then 128 else 32 end))
+      end
+  elif $format == "uc-mac" then ($value | test("^[0-9A-Fa-f][0-9A-Fa-f](:[0-9A-Fa-f][0-9A-Fa-f]){5}$"))
+  elif $format == "uc-mobility" then ($value | test("^[0-9A-Fa-f]{4}$"))
+  elif $format == "uc-host" then ($value | valid_uc_host)
+  elif $format == "uc-timeout" then ($value | test("^[0-9]+[smhdw]$"))
+  elif $format == "uc-base64" then ($value | valid_base64)
+  elif $format == "uc-portrange" then ($value | valid_portrange)
+  elif $format == "hostname" then ($value | valid_hostname_common(1; true))
+  elif $format == "uc-fqdn" then ($value | valid_hostname_common(2; true))
+  elif $format == "uc-ip" then ($value | valid_ip)
+  elif $format == "ipv4" then ($value | valid_ipv4)
+  elif $format == "ipv6" then ($value | valid_ipv6)
+  elif $format == "uri" then ($value | valid_uri)
+  else true end;
+
+def normalize_variant_errors($results):
+  [ $results[]
+    | if (.errors | length) == 0 then
+        "- variant \(.index):\n\t - matched"
+      else
+        "- variant \(.index):\n" + (.errors | map("\t - " + .) | join("\n"))
+      end ]
+  | join("\n- or -\n");
 
 def validate_string($schema; $value; $path):
   if ($value | type) != "string" then
     []
   else
     (if (($schema.minLength? | type) == "number") and (($value | length) < $schema.minLength) then
-       error_at($path; "must have length >= \($schema.minLength)")
+       error_at($path; "must be at least \($schema.minLength) characters long")
      else [] end)
     +
     (if (($schema.maxLength? | type) == "number") and (($value | length) > $schema.maxLength) then
-       error_at($path; "must have length <= \($schema.maxLength)")
+       error_at($path; "must be at most \($schema.maxLength) characters long")
      else [] end)
     +
     (if (($schema.pattern? | type) == "string") and (($value | test($schema.pattern)) | not) then
-       error_at($path; "must match pattern \($schema.pattern)")
+       error_at($path; "must match regular expression /\($schema.pattern)/")
+     else [] end)
+    +
+    (if (($schema.format? | type) == "string") and (format_is_valid($schema.format; $value) | not) then
+       error_at($path; "must be a valid \(format_desc($schema.format))")
      else [] end)
   end;
 
@@ -5116,24 +5152,24 @@ def validate_number($schema; $value; $path):
   if ($value | type) != "number" then
     []
   else
-    (if (($schema.minimum? | type) == "number") and ($value < $schema.minimum) then
-       error_at($path; "must be >= \($schema.minimum)")
+    (if (($schema.multipleOf? | type) == "number") and (($value / $schema.multipleOf) != (($value / $schema.multipleOf) | floor)) then
+       error_at($path; "must be divisible by \($schema.multipleOf)")
      else [] end)
     +
     (if (($schema.maximum? | type) == "number") and ($value > $schema.maximum) then
-       error_at($path; "must be <= \($schema.maximum)")
+       error_at($path; "must be lower than or equal to \($schema.maximum)")
      else [] end)
     +
-    (if (($schema.exclusiveMinimum? | type) == "number") and ($value <= $schema.exclusiveMinimum) then
-       error_at($path; "must be > \($schema.exclusiveMinimum)")
+    (if (($schema.minimum? | type) == "number") and ($value < $schema.minimum) then
+       error_at($path; "must be bigger than or equal to \($schema.minimum)")
      else [] end)
     +
     (if (($schema.exclusiveMaximum? | type) == "number") and ($value >= $schema.exclusiveMaximum) then
-       error_at($path; "must be < \($schema.exclusiveMaximum)")
+       error_at($path; "must be lower than \($schema.exclusiveMaximum)")
      else [] end)
     +
-    (if (($schema.multipleOf? | type) == "number") and (($value / $schema.multipleOf | floor) * $schema.multipleOf != $value) then
-       error_at($path; "must be a multiple of \($schema.multipleOf)")
+    (if (($schema.exclusiveMinimum? | type) == "number") and ($value <= $schema.exclusiveMinimum) then
+       error_at($path; "must be bigger than \($schema.exclusiveMinimum)")
      else [] end)
   end;
 
@@ -5146,21 +5182,99 @@ def validate_type($schema; $value; $path):
     else error_at($path; "must match one of types \(($schema.type | join(", ")))") end
   else [] end;
 
-def validate_constraints($root; $schema; $value; $path):
-  validate_variants($root; $schema; $value; $path)
-  + validate_type($schema; $value; $path)
-  + (if ($schema | has("const")) and $value != $schema.const then
-       error_at($path; "must equal declared const value")
+def validate($root; $schema; $value; $path):
+  if ($schema | type) != "object" then
+    []
+  elif ($schema["$ref"]? | type) == "string" then
+    (resolve_ref($root; $schema["$ref"]) // {}) as $resolved
+    | validate($root; ($resolved + ($schema | del(.["$ref"]))); $value; $path)
+  else
+    (if (($schema.anyOf? | type) == "array") and (($schema.anyOf | length) > 0) then
+       [ range(0; $schema.anyOf | length) as $idx
+         | { index: $idx, errors: validate($root; $schema.anyOf[$idx]; $value; $path) } ] as $results
+       | ([ $results[] | select((.errors | length) == 0) ] | length) as $count
+       | if $count >= 1 then []
+         else error_at($path; "must match at least one of the following constraints:\n" + normalize_variant_errors($results))
+         end
      else [] end)
-  + (if (($schema.enum? | type) == "array") and (($schema.enum | index($value)) == null) then
-       error_at($path; "must be one of enum values")
+    +
+    (if (($schema.oneOf? | type) == "array") and (($schema.oneOf | length) > 0) then
+       [ range(0; $schema.oneOf | length) as $idx
+         | { index: $idx, errors: validate($root; $schema.oneOf[$idx]; $value; $path) } ] as $results
+       | ([ $results[] | select((.errors | length) == 0) ] | length) as $count
+       | if $count == 1 then []
+         else error_at($path; "must match exactly one of the following constraints:\n" + normalize_variant_errors($results))
+         end
      else [] end)
-  + validate_string($schema; $value; $path)
-  + validate_number($schema; $value; $path)
-  + validate_array($root; $schema; $value; $path)
-  + validate_object($root; $schema; $value; $path);
+    +
+    (if (($schema.allOf? | type) == "array") and (($schema.allOf | length) > 0) then
+       (([ $schema.allOf[] | validate($root; .; $value; $path) ] | add) // [])
+     else [] end)
+    + validate_type($schema; $value; $path)
+    + (if ($schema | has("const")) and $value != $schema.const then
+         error_at($path; "must have value \($schema.const | @json)")
+       else [] end)
+    + (if (($schema.enum? | type) == "array") and (($schema.enum | index($value)) == null) then
+         error_at($path; "must be one of \(($schema.enum | map(@json) | join(", ")))")
+       else [] end)
+    + validate_string($schema; $value; $path)
+    + validate_number($schema; $value; $path)
+    + (if ($value | type) == "array" then
+         (if (($schema.maxItems? | type) == "number") and (($value | length) > $schema.maxItems) then
+            error_at($path; "must not have more than \($schema.maxItems) items")
+          else [] end)
+         +
+         (if (($schema.minItems? | type) == "number") and (($value | length) < $schema.minItems) then
+            error_at($path; "must have at least \($schema.minItems) items")
+          else [] end)
+         +
+         (if ($schema.items? | type) == "object" then
+            (([ range(0; ($value | length)) as $idx
+              | validate($root; $schema.items; $value[$idx]; child_path($path; $idx)) ] | add) // [])
+          else [] end)
+       else [] end)
+    + (if ($value | type) == "object" then
+         (if (($schema.maxProperties? | type) == "number") and (($value | length) > $schema.maxProperties) then
+            error_at($path; "must have at most \($schema.maxProperties) properties")
+          else [] end)
+         +
+         (if (($schema.minProperties? | type) == "number") and (($value | length) < $schema.minProperties) then
+            error_at($path; "must have at least \($schema.minProperties) properties")
+          else [] end)
+         +
+         (if (($schema.propertyNames? | type) == "object") then
+            (($schema.propertyNames + {"type": "string"}) as $key_schema
+             | (([ ($value | keys_unsorted[]) as $key
+                 | validate($root; $key_schema; $key; child_path($path; $key)) ] | add) // []))
+          else [] end)
+         +
+         (if (($schema.required? | type) == "array") then
+            [ $schema.required[] as $req | select($value | has($req) | not) | ((if $path == "" then "/" else $path end) + ": is required") ]
+          else [] end)
+         +
+         (if $schema.additionalProperties? == false then
+            (($schema.properties? // {}) as $props
+             | [ ($value | keys_unsorted[]) as $key
+                 | select($props | has($key) | not)
+                 | ((child_path($path; $key)) + ": additional property is not allowed") ])
+          else [] end)
+         +
+         (((($schema.properties? // {}) | to_entries) as $entries
+           | ([ $entries[] as $entry
+               | select($value | has($entry.key))
+               | validate($root; $entry.value; $value[$entry.key]; child_path($path; $entry.key)) ] | add)) // [])
+       else [] end)
+  end;
+
+def merge_prepared_values($items):
+  reduce $items[] as $item (null;
+    if . == null then $item
+    elif (type == "object") and (($item | type) == "object") then . + $item
+    else $item end);
 
 def prepare($root; $schema; $value):
+  def variant_passes($variant):
+    (validate($root; $variant; $value; "") | length) == 0;
   def prepare_variant($variant):
     prepare($root; $variant; $value);
   if ($schema | type) != "object" then
@@ -5169,22 +5283,14 @@ def prepare($root; $schema; $value):
     (resolve_ref($root; $schema["$ref"]) // {}) as $resolved
     | prepare($root; ($resolved + ($schema | del(.["$ref"]))); $value)
   elif (($schema.anyOf? | type) == "array") and (($schema.anyOf | length) > 0) then
-    [ $schema.anyOf[] | select(variant_passes($root; .; $value; "")) | prepare_variant(.) ] as $prepared
-    | if ($prepared | length) == 0 then $value
-      else reduce $prepared[] as $item (null;
-        if . == null then $item
-        elif (type == "object") and (($item | type) == "object") then . + $item
-        else $item end)
-      end
+    [ $schema.anyOf[] | select(variant_passes(.)) | prepare_variant(.) ] as $prepared
+    | if ($prepared | length) == 0 then $value else merge_prepared_values($prepared) end
   elif (($schema.oneOf? | type) == "array") and (($schema.oneOf | length) > 0) then
-    [ $schema.oneOf[] | select(variant_passes($root; .; $value; "")) | prepare_variant(.) ] as $prepared
+    [ $schema.oneOf[] | select(variant_passes(.)) | prepare_variant(.) ] as $prepared
     | if ($prepared | length) == 1 then $prepared[0] else $value end
   elif (($schema.allOf? | type) == "array") and (($schema.allOf | length) > 0) then
     [ $schema.allOf[] | prepare_variant(.) ] as $prepared
-    | reduce $prepared[] as $item (null;
-        if . == null then $item
-        elif (type == "object") and (($item | type) == "object") then . + $item
-        else $item end)
+    | merge_prepared_values($prepared)
   elif ($schema.type? == "object") or (($schema.properties? | type) == "object") then
     (if ($schema.additionalProperties? == true) then $value else {} end) as $base
     | (($schema.properties? // {}) | to_entries) as $entries
@@ -5202,68 +5308,7 @@ def prepare($root; $schema; $value):
     $value
   end;
 
-  if ($schema | type) != "object" then
-    []
-  elif ($schema["$ref"]? | type) == "string" then
-    (resolve_ref($root; $schema["$ref"]) // {}) as $resolved
-    | validate($root; ($resolved + ($schema | del(.["$ref"]))); $value; $path)
-  else
-    validate_constraints($root; $schema; $value; $path)
-  end;
-
-  def prepare($root; $schema; $value):
-    def ptr_unescape:
-      gsub("~1"; "/") | gsub("~0"; "~");
-    def prepare_key($key):
-      (($key | tostring) | gsub("[^A-Za-z0-9_]+"; "_"))
-      | if test("^[0-9]") then "_" + . else . end;
-    def resolve_ref($root; $ref):
-      if ($ref | startswith("#/")) then
-        reduce (($ref[2:] | split("/"))[]) as $part ($root; .[$part | ptr_unescape])
-      else
-        null
-      end;
-    def prepare_variant($variant):
-      prepare($root; $variant; $value);
-    if ($schema | type) != "object" then
-      $value
-    elif ($schema["$ref"]? | type) == "string" then
-      (resolve_ref($root; $schema["$ref"]) // {}) as $resolved
-      | prepare($root; ($resolved + ($schema | del(.["$ref"]))); $value)
-    elif (($schema.anyOf? | type) == "array") and (($schema.anyOf | length) > 0) then
-      [ $schema.anyOf[] | select((validate($root; .; $value; "") | length) == 0) | prepare_variant(.) ] as $prepared
-      | if ($prepared | length) == 0 then $value
-        else reduce $prepared[] as $item (null;
-          if . == null then $item
-          elif (type == "object") and (($item | type) == "object") then . + $item
-          else $item end)
-        end
-    elif (($schema.oneOf? | type) == "array") and (($schema.oneOf | length) > 0) then
-      [ $schema.oneOf[] | select((validate($root; .; $value; "") | length) == 0) | prepare_variant(.) ] as $prepared
-      | if ($prepared | length) == 1 then $prepared[0] else $value end
-    elif (($schema.allOf? | type) == "array") and (($schema.allOf | length) > 0) then
-      [ $schema.allOf[] | prepare_variant(.) ] as $prepared
-      | reduce $prepared[] as $item (null;
-          if . == null then $item
-          elif (type == "object") and (($item | type) == "object") then . + $item
-          else $item end)
-    elif ($schema.type? == "object") or (($schema.properties? | type) == "object") then
-      (if ($schema.additionalProperties? == true) then $value else {} end) as $base
-      | (($schema.properties? // {}) | to_entries) as $entries
-      | reduce $entries[] as $entry ($base;
-          if ($value | has($entry.key)) then
-            .[prepare_key($entry.key)] = prepare($root; $entry.value; $value[$entry.key])
-          elif ($entry.value | has("default")) then
-            .[prepare_key($entry.key)] = $entry.value.default
-          else
-            .
-          end)
-    elif ($schema.type? == "array") and (($schema.items? | type) == "object") then
-      [ $value[] | prepare($root; $schema.items; .) ]
-    else
-      $value
-    end;
-
+def run($root; $input):
   (validate($root; $root; $input; "")) as $errors
   | { errors: $errors, value: (if ($errors | length) == 0 then prepare($root; $root; $input) else null end) };
 
