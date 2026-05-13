@@ -1399,6 +1399,59 @@ function instantiateRadio(location, value, errors) {
 	return value;
 }
 
+function instantiateServiceMduOnboarding(location, value, errors) {
+	if (type(value) == "object") {
+		let obj = {};
+
+		function parsePpskRegistrationUrl(location, value, errors) {
+			if (type(value) == "string") {
+				if (!matchUri(value))
+					push(errors, [ location, "must be a valid URI" ]);
+
+			}
+
+			if (type(value) != "string")
+				push(errors, [ location, "must be of type string" ]);
+
+			return value;
+		}
+
+		if (exists(value, "ppsk-registration-url")) {
+			obj.ppsk_registration_url = parsePpskRegistrationUrl(location + "/ppsk-registration-url", value["ppsk-registration-url"], errors);
+		}
+		else {
+			push(errors, [ location, "is required" ]);
+		}
+
+		function parseServerIp(location, value, errors) {
+			if (type(value) == "string") {
+				if (!matchUcIp(value))
+					push(errors, [ location, "must be a valid IPv4 or IPv6 address" ]);
+
+			}
+
+			if (type(value) != "string")
+				push(errors, [ location, "must be of type string" ]);
+
+			return value;
+		}
+
+		if (exists(value, "server-ip")) {
+			obj.server_ip = parseServerIp(location + "/server-ip", value["server-ip"], errors);
+		}
+		else {
+			push(errors, [ location, "is required" ]);
+		}
+
+		return obj;
+	}
+
+	if (type(value) != "object")
+		push(errors, [ location, "must be of type object" ]);
+
+	return value;
+}
+
 function instantiateInterfaceVlan(location, value, errors) {
 	if (type(value) == "object") {
 		let obj = {};
@@ -6715,6 +6768,10 @@ function instantiateInterface(location, value, errors) {
 			obj.services = parseServices(location + "/services", value["services"], errors);
 		}
 
+		if (exists(value, "mdu-onboarding")) {
+			obj.mdu_onboarding = instantiateServiceMduOnboarding(location + "/mdu-onboarding", value["mdu-onboarding"], errors);
+		}
+
 		function parseVlanAwareness(location, value, errors) {
 			if (type(value) == "object") {
 				let obj = {};
@@ -9917,6 +9974,10 @@ function instantiateService(location, value, errors) {
 
 		if (exists(value, "dhcp-inject")) {
 			obj.dhcp_inject = instantiateServiceDhcpInject(location + "/dhcp-inject", value["dhcp-inject"], errors);
+		}
+
+		if (exists(value, "mdu-onboarding")) {
+			obj.mdu_onboarding = instantiateServiceMduOnboarding(location + "/mdu-onboarding", value["mdu-onboarding"], errors);
 		}
 
 		return obj;

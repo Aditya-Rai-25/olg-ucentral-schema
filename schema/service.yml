@@ -41,3 +41,5 @@ properties:
     $ref: 'https://ucentral.io/schema/v1/service/snmpd/'
   dhcp-inject:
     $ref: 'https://ucentral.io/schema/v1/service/dhcp-inject/'
+  mdu-onboarding:
+    $ref: 'https://ucentral.io/schema/v1/service/mdu-onboarding/'

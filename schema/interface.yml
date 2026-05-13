@@ -47,6 +47,14 @@ properties:
       examples:
       - ssh
       - lldp
+      - mdu-onboarding
+  mdu-onboarding:
+    description: |
+      Optional per-interface MDU onboarding configuration.
+
+      This references the same schema used under the top-level `services`
+      object, but allows scoping onboarding parameters to a specific interface.
+    $ref: "https://ucentral.io/schema/v1/service/mdu-onboarding/"
   vlan-awareness:
     description:
       Setup additional VLANs inside the bridge

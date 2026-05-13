@@ -887,9 +887,36 @@
                             "type": "string",
                             "examples": [
                                 "ssh",
-                                "lldp"
+                                "lldp",
+                                "mdu-onboarding"
                             ]
                         }
+                    },
+                    "mdu-onboarding": {
+                        "description": "Configure MDU onboarding integration parameters.\n\nThis service provides the information required to integrate a captive/onboarding\nportal workflow for MDU deployments (for example PPSK registration).\n",
+                        "type": "object",
+                        "properties": {
+                            "ppsk-registration-url": {
+                                "description": "URL of the PPSK registration endpoint.\n",
+                                "type": "string",
+                                "format": "uri",
+                                "examples": [
+                                    "http://157.20.214.249/login/ppsk_register/index.html"
+                                ]
+                            },
+                            "server-ip": {
+                                "description": "IP address of the onboarding server.\n",
+                                "type": "string",
+                                "format": "uc-ip",
+                                "examples": [
+                                    "157.20.214.249"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "ppsk-registration-url",
+                            "server-ip"
+                        ]
                     },
                     "vlan-awareness": {
                         "description": "Setup additional VLANs inside the bridge",
@@ -4798,6 +4825,32 @@
                             ]
                         }
                     }
+                },
+                "mdu-onboarding": {
+                    "description": "Configure MDU onboarding integration parameters.\n\nThis service provides the information required to integrate a captive/onboarding\nportal workflow for MDU deployments (for example PPSK registration).\n",
+                    "type": "object",
+                    "properties": {
+                        "ppsk-registration-url": {
+                            "description": "URL of the PPSK registration endpoint.\n",
+                            "type": "string",
+                            "format": "uri",
+                            "examples": [
+                                "http://157.20.214.249/login/ppsk_register/index.html"
+                            ]
+                        },
+                        "server-ip": {
+                            "description": "IP address of the onboarding server.\n",
+                            "type": "string",
+                            "format": "uc-ip",
+                            "examples": [
+                                "157.20.214.249"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "ppsk-registration-url",
+                        "server-ip"
+                    ]
                 }
             }
         },
